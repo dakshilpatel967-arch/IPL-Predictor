@@ -8,12 +8,17 @@ import { Home as HomeIcon, Users, Trophy, User as UserIcon, ChevronLeft, Chevron
 const MAX_PTS = 80
 const WINNER_PTS = 10, BAT_PTS = 20, BOWL_PTS = 20, R1_PTS = 15, R2_PTS = 15
 
+const viewToHash = (v) => { if (v.matchId) return `#${v.name}:${v.matchId}`; if (v.groupId) return `#${v.name}:${v.groupId}`; return `#${v.name}` }
+const hashToView = (h) => { const s = (h || '#home').slice(1); const [name, id] = s.split(':'); if (!name) return { name: 'home' }; if (id && (name === 'predict' || name === 'match' || name === 'admin-players' || name === 'admin-result')) return { name, matchId: id }; if (id && name === 'group') return { name, groupId: id }; return { name } }
+const tabFromView = (v) => { const m = { home:'home', groups:'groups', leaderboard:'leaderboard', profile:'profile' }; return m[v.name] || null }
+
 function App() {
   const [authReady, setAuthReady] = useState(false)
   const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(null)
-  const [view, setView] = useState({ name: 'home' })
-  const [tab, setTab] = useState('home')
+  const initView = typeof window !== 'undefined' ? hashToView(window.location.hash) : { name: 'home' }
+  const [view, setView] = useState(initView)
+  const [tab, setTab] = useState(tabFromView(initView) || 'home')
   const [navKey, setNavKey] = useState(0)
 
   useEffect(() => {
@@ -34,20 +39,16 @@ function App() {
   }, [])
 
   useEffect(() => {
-    window.history.replaceState({ view: { name: 'home' } }, '')
-    const handlePop = (e) => {
-      if (e.state?.view) { setView(e.state.view); setNavKey(k => k + 1); const m = { home:'home', groups:'groups', leaderboard:'leaderboard', profile:'profile' }; if (m[e.state.view.name]) setTab(m[e.state.view.name]) }
-      else { setView({ name: 'home' }); setTab('home'); setNavKey(k => k + 1) }
-    }
-    window.addEventListener('popstate', handlePop)
-    return () => window.removeEventListener('popstate', handlePop)
+    const handleHash = () => { const v = hashToView(window.location.hash); setView(v); setNavKey(k => k + 1); const t = tabFromView(v); if (t) setTab(t) }
+    window.addEventListener('hashchange', handleHash)
+    return () => window.removeEventListener('hashchange', handleHash)
   }, [])
 
   const loadProfile = async (uid) => { const { data } = await supabase.from('profiles').select('*').eq('id', uid).maybeSingle(); if (data) setProfile(data) }
   const refreshProfile = useCallback(async () => { if (user) await loadProfile(user.id) }, [user])
-  const navigate = (v) => { setView(v); setNavKey(k => k + 1); window.history.pushState({ view: v }, '') }
+  const navigate = (v) => { setView(v); setNavKey(k => k + 1); window.location.hash = viewToHash(v) }
   const goBack = () => { window.history.back() }
-  const goTab = (t) => { const v = { name: t === 'home' ? 'home' : t }; setTab(t); setView(v); setNavKey(k => k + 1); window.history.pushState({ view: v }, '') }
+  const goTab = (t) => { const v = { name: t === 'home' ? 'home' : t }; setTab(t); setView(v); setNavKey(k => k + 1); window.location.hash = viewToHash(v) }
 
   if (!authReady) return <SplashScreen />
   if (!user) return <LoginScreen />
@@ -133,10 +134,10 @@ const NameSetup = ({ user, onDone }) => {
 
 const HomeScreen = ({ user, navigate }) => {
   const [loading, setLoading] = useState(true); const [todayMatches, setTodayMatches] = useState([]); const [upcoming, setUpcoming] = useState([]); const [recent, setRecent] = useState([]); const [groups, setGroups] = useState([]); const [pmap, setPmap] = useState({}); const [smap, setSmap] = useState({})
-  useEffect(() => { (async () => { setLoading(true); const now = new Date(); const s = new Date(now); s.setHours(0,0,0,0); const e = new Date(now); e.setHours(23,59,59,999)
+  useEffect(() => { (async () => { setLoading(true); try { const now = new Date(); const s = new Date(now); s.setHours(0,0,0,0); const e = new Date(now); e.setHours(23,59,59,999)
     const [t,u,r,p,gr] = await Promise.all([supabase.from('matches').select('*').gte('scheduled_at',s.toISOString()).lte('scheduled_at',e.toISOString()).order('scheduled_at'), supabase.from('matches').select('*').eq('status','upcoming').gt('scheduled_at',e.toISOString()).order('scheduled_at').limit(5), supabase.from('matches').select('*').eq('status','completed').order('scheduled_at',{ascending:false}).limit(3), supabase.from('predictions').select('match_id').eq('user_id',user.id), supabase.from('group_members').select('group_id,groups(id,name,mode,invite_code)').eq('user_id',user.id)])
     setTodayMatches(t.data||[]); setUpcoming(u.data||[]); setRecent(r.data||[]); const pm = {}; (p.data||[]).forEach(x => pm[x.match_id]=true); setPmap(pm); setGroups((gr.data||[]).map(x=>x.groups).filter(Boolean))
-    const rids = (r.data||[]).map(x=>x.id); if (rids.length) { const { data: sc } = await supabase.from('scores').select('*').eq('user_id',user.id).in('match_id',rids); const sm = {}; (sc||[]).forEach(x => sm[x.match_id]=x); setSmap(sm) }; setLoading(false)
+    const rids = (r.data||[]).map(x=>x.id); if (rids.length) { const { data: sc } = await supabase.from('scores').select('*').eq('user_id',user.id).in('match_id',rids); const sm = {}; (sc||[]).forEach(x => sm[x.match_id]=x); setSmap(sm) } } catch(err) { console.error('Home load error:', err) } finally { setLoading(false) }
   })() }, [user.id])
   if (loading) return <div className="px-4 pt-6"><div className="h-7 w-40 shimmer rounded-lg mb-6"/><div className="h-44 shimmer rounded-3xl mb-4"/></div>
   return (<div className="px-4 pt-6"><Header/>
@@ -170,7 +171,7 @@ const PredictScreen = ({ matchId, user, navigate, goBack }) => {
   const [match, setMatch] = useState(null); const [batsmen, setBatsmen] = useState([]); const [bowlers, setBowlers] = useState([]); const [existing, setExisting] = useState(null)
   const [winner, setWinner] = useState(null); const [bat, setBat] = useState(null); const [bowl, setBowl] = useState(null); const [r1, setR1] = useState(null); const [r2, setR2] = useState(null)
   const [loading, setLoading] = useState(true); const [submitting, setSubmitting] = useState(false)
-  useEffect(() => { (async () => { setLoading(true); const [m,o,p] = await Promise.all([supabase.from('matches').select('*').eq('id',matchId).maybeSingle(), supabase.from('player_options').select('*').eq('match_id',matchId).order('sort_order'), supabase.from('predictions').select('*').eq('match_id',matchId).eq('user_id',user.id).maybeSingle()]); setMatch(m.data); setBatsmen((o.data||[]).filter(x=>x.category==='batsman')); setBowlers((o.data||[]).filter(x=>x.category==='bowler')); setExisting(p.data); setLoading(false) })() }, [matchId, user.id])
+  useEffect(() => { (async () => { setLoading(true); try { const [m,o,p] = await Promise.all([supabase.from('matches').select('*').eq('id',matchId).maybeSingle(), supabase.from('player_options').select('*').eq('match_id',matchId).order('sort_order'), supabase.from('predictions').select('*').eq('match_id',matchId).eq('user_id',user.id).maybeSingle()]); setMatch(m.data); setBatsmen((o.data||[]).filter(x=>x.category==='batsman')); setBowlers((o.data||[]).filter(x=>x.category==='bowler')); setExisting(p.data) } catch(err) { console.error('Predict load error:', err) } finally { setLoading(false) } })() }, [matchId, user.id])
   const locked = match && new Date(match.locks_at).getTime() <= Date.now(); const allOk = winner && bat && bowl && r1 && r2
   const submit = async () => { setSubmitting(true); const { error } = await supabase.from('predictions').insert({ user_id:user.id, match_id:matchId, predicted_winner:winner, predicted_batsman_id:bat, predicted_bowler_id:bowl, predicted_first_innings_runs:r1, predicted_second_innings_runs:r2 }); setSubmitting(false); if (error) return toast.error(error.message); navigate({ name:'confirm', data:{ match, winner, batName:batsmen.find(b=>b.id===bat)?.player_name, bowlName:bowlers.find(b=>b.id===bowl)?.player_name, r1, r2 } }) }
   if (loading) return <div className="p-6 text-center text-[#8A92A8]">Loading...</div>
